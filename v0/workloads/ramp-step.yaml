@@ -38,6 +38,23 @@ jobs:
           targetHost: "{{.NET_TARGET}}"
           netInterval: "{{.NET_INTERVAL}}"
           podReplicas: "{{.NET_REPLICAS}}"
+  - name: "api-stress-step-{{.STEP}}"
+    jobType: create
+    jobIterations: {{.API_ITERATIONS}}
+    namespace: "kb-stress-{{.STEP}}"
+    namespacedIterations: false
+    cleanup: false
+    waitWhenFinished: false
+    qps: {{.API_QPS}}
+    burst: {{.API_BURST}}
+    preLoadImages: false
+    verifyObjects: false
+    errorOnVerify: false
+    objects:
+      - objectTemplate: templates/api-stress-configmap.yaml
+        replicas: {{.API_REPLICAS}}
+        inputVars:
+          step: "{{.STEP}}"
   - name: "probe-ramp-step-{{.STEP}}"
     jobType: create
     jobIterations: 1

@@ -95,11 +95,16 @@ MODE_CPU="${MODE_CPU:-on}"
 MODE_MEM="${MODE_MEM:-on}"
 MODE_DISK="${MODE_DISK:-off}"
 MODE_NETWORK="${MODE_NETWORK:-off}"
+MODE_API="${MODE_API:-off}"
 RAMP_DISK_REPLICAS="${RAMP_DISK_REPLICAS:-1}"
 RAMP_DISK_MB="${RAMP_DISK_MB:-64}"
 RAMP_NET_REPLICAS="${RAMP_NET_REPLICAS:-1}"
 RAMP_NET_TARGET="${RAMP_NET_TARGET:-kubernetes.default.svc}"
 RAMP_NET_INTERVAL="${RAMP_NET_INTERVAL:-0.5}"
+RAMP_API_QPS="${RAMP_API_QPS:-20}"
+RAMP_API_BURST="${RAMP_API_BURST:-40}"
+RAMP_API_ITERATIONS="${RAMP_API_ITERATIONS:-50}"
+RAMP_API_REPLICAS="${RAMP_API_REPLICAS:-5}"
 
 # ---------------------------------------------------------------------------
 # CLI flags (-i interactive, -c config prompts, -r registry prompts)
@@ -197,6 +202,18 @@ setup_contention_modes() {
     else
       MODE_NETWORK="off"
     fi
+
+    if prompt_yn "Enable API stress? [Y/n]"; then
+      MODE_API="on"
+      if prompt_yn "Edit API stress settings for this run? [Y/n]"; then
+        RAMP_API_QPS="$(prompt_value '  API QPS (queries per second)' "$RAMP_API_QPS")"
+        RAMP_API_BURST="$(prompt_value '  API burst' "$RAMP_API_BURST")"
+        RAMP_API_ITERATIONS="$(prompt_value '  API iterations (objects per step)' "$RAMP_API_ITERATIONS")"
+        RAMP_API_REPLICAS="$(prompt_value '  API replicas per iteration' "$RAMP_API_REPLICAS")"
+      fi
+    else
+      MODE_API="off"
+    fi
   fi
 
   # --- Persist configuration ---
@@ -205,6 +222,7 @@ MODE_CPU=$MODE_CPU
 MODE_MEM=$MODE_MEM
 MODE_DISK=$MODE_DISK
 MODE_NETWORK=$MODE_NETWORK
+MODE_API=$MODE_API
 RAMP_CPU_REPLICAS=$RAMP_CPU_REPLICAS
 RAMP_CPU_MILLICORES=$RAMP_CPU_MILLICORES
 RAMP_MEM_REPLICAS=$RAMP_MEM_REPLICAS
@@ -214,13 +232,18 @@ RAMP_DISK_MB=$RAMP_DISK_MB
 RAMP_NET_REPLICAS=$RAMP_NET_REPLICAS
 RAMP_NET_TARGET=$RAMP_NET_TARGET
 RAMP_NET_INTERVAL=$RAMP_NET_INTERVAL
+RAMP_API_QPS=$RAMP_API_QPS
+RAMP_API_BURST=$RAMP_API_BURST
+RAMP_API_ITERATIONS=$RAMP_API_ITERATIONS
+RAMP_API_REPLICAS=$RAMP_API_REPLICAS
 EOF
 
-  local cpu_en mem_en disk_en net_en
+  local cpu_en mem_en disk_en net_en api_en
   [ "$MODE_CPU" = "on" ] && cpu_en=true || cpu_en=false
   [ "$MODE_MEM" = "on" ] && mem_en=true || mem_en=false
   [ "$MODE_DISK" = "on" ] && disk_en=true || disk_en=false
   [ "$MODE_NETWORK" = "on" ] && net_en=true || net_en=false
+  [ "$MODE_API" = "on" ] && api_en=true || api_en=false
 
   cat > "$RUN_DIR/modes.json" <<EOF
 {
@@ -228,7 +251,8 @@ EOF
     "cpu":     {"enabled": $cpu_en, "replicas": $RAMP_CPU_REPLICAS, "millicores": $RAMP_CPU_MILLICORES},
     "mem":     {"enabled": $mem_en, "replicas": $RAMP_MEM_REPLICAS, "memMb": $RAMP_MEM_MB},
     "disk":    {"enabled": $disk_en, "replicas": $RAMP_DISK_REPLICAS, "diskMb": $RAMP_DISK_MB},
-    "network": {"enabled": $net_en, "replicas": $RAMP_NET_REPLICAS, "target": "$RAMP_NET_TARGET", "intervalSec": "$RAMP_NET_INTERVAL"}
+    "network": {"enabled": $net_en, "replicas": $RAMP_NET_REPLICAS, "target": "$RAMP_NET_TARGET", "intervalSec": "$RAMP_NET_INTERVAL"},
+    "api":     {"enabled": $api_en, "qps": $RAMP_API_QPS, "burst": $RAMP_API_BURST, "iterations": $RAMP_API_ITERATIONS, "replicas": $RAMP_API_REPLICAS}
   }
 }
 EOF
@@ -239,6 +263,7 @@ EOF
   printf "    mem     = %-3s  (replicas=%s, mb=%s)\n" "$MODE_MEM" "$RAMP_MEM_REPLICAS" "$RAMP_MEM_MB"
   printf "    disk    = %-3s  (replicas=%s, mb=%s)\n" "$MODE_DISK" "$RAMP_DISK_REPLICAS" "$RAMP_DISK_MB"
   printf "    network = %-3s  (replicas=%s, target=%s, interval=%ss)\n" "$MODE_NETWORK" "$RAMP_NET_REPLICAS" "$RAMP_NET_TARGET" "$RAMP_NET_INTERVAL"
+  printf "    api     = %-3s  (qps=%s, burst=%s, iterations=%s, replicas=%s)\n" "$MODE_API" "$RAMP_API_QPS" "$RAMP_API_BURST" "$RAMP_API_ITERATIONS" "$RAMP_API_REPLICAS"
 }
 
 # ---------------------------------------------------------------------------
@@ -262,7 +287,7 @@ ensure_staging() {
 generate_ramp_step() {
   local out="$WORK_DIR/workloads/ramp-step.yaml"
   local has_stress=false
-  [[ "$MODE_CPU" = "on" || "$MODE_MEM" = "on" || "$MODE_DISK" = "on" || "$MODE_NETWORK" = "on" ]] && has_stress=true
+  [[ "$MODE_CPU" = "on" || "$MODE_MEM" = "on" || "$MODE_DISK" = "on" || "$MODE_NETWORK" = "on" || "$MODE_API" = "on" ]] && has_stress=true
 
   cat > "$out" <<'YAML'
 global:
@@ -321,6 +346,28 @@ YAML
           targetHost: "{{.NET_TARGET}}"
           netInterval: "{{.NET_INTERVAL}}"
           podReplicas: "{{.NET_REPLICAS}}"
+YAML
+  fi
+
+  if [ "$MODE_API" = "on" ]; then
+    cat >> "$out" <<'YAML'
+  - name: "api-stress-step-{{.STEP}}"
+    jobType: create
+    jobIterations: {{.API_ITERATIONS}}
+    namespace: "kb-stress-{{.STEP}}"
+    namespacedIterations: false
+    cleanup: false
+    waitWhenFinished: false
+    qps: {{.API_QPS}}
+    burst: {{.API_BURST}}
+    preLoadImages: false
+    verifyObjects: false
+    errorOnVerify: false
+    objects:
+      - objectTemplate: templates/api-stress-configmap.yaml
+        replicas: {{.API_REPLICAS}}
+        inputVars:
+          step: "{{.STEP}}"
 YAML
   fi
 
@@ -595,6 +642,10 @@ run_ramp_step() {
   export NET_TARGET="$RAMP_NET_TARGET"
   export NET_REPLICAS="$RAMP_NET_REPLICAS"
   export NET_INTERVAL="$RAMP_NET_INTERVAL"
+  export API_QPS="$RAMP_API_QPS"
+  export API_BURST="$RAMP_API_BURST"
+  export API_ITERATIONS="$RAMP_API_ITERATIONS"
+  export API_REPLICAS="$RAMP_API_REPLICAS"
   export RAMP_PROBE_DURATION
   export RAMP_PROBE_INTERVAL
   export PROBE_READYZ

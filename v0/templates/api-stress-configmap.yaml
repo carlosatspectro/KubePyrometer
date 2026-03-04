@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-stress-{{.step}}-{{.Iteration}}-{{.Replica}}
+  labels:
+    app: kb-stress
+    kb-step: "{{.step}}"
+    kb-type: api
+data:
+  step: "{{.step}}"
+  iteration: "{{.Iteration}}"
+  replica: "{{.Replica}}"

@@ -73,7 +73,7 @@ Every phase is recorded to `phases.jsonl`, probe measurements go to `probe.jsonl
 
 ## Contention modes
 
-The harness supports four contention modes, each independently enabled or disabled:
+The harness supports five contention modes, each independently enabled or disabled:
 
 | Mode | What it does | Default (interactive) | Default (non-interactive) |
 |------|-------------|----------------------|--------------------------|
@@ -81,8 +81,9 @@ The harness supports four contention modes, each independently enabled or disabl
 | **mem** | Pods that fill `/dev/shm` with configurable MB | on | on |
 | **disk** | Pods that continuously write/delete files on an `emptyDir` volume | on | off |
 | **network** | Pods that make continuous HTTPS requests to a configurable target | on | off |
+| **api** | Floods the Kubernetes API server with ConfigMap CRUD operations at configurable QPS | on | off |
 
-All four stress modes use `busybox:1.36.1` and run as unprivileged pods with no `NET_ADMIN` capabilities or PVCs. The probe pods use `bitnami/kubectl:1.35.2`.
+The cpu, mem, disk, and network stress modes use `busybox:1.36.1` and run as unprivileged pods with no `NET_ADMIN` capabilities or PVCs. The api stress mode uses kube-burner's native object creation to hammer the API server through the full request path (authn, authz, admission, etcd). The probe pods use `bitnami/kubectl:1.35.2`.
 
 ### CLI flags
 
@@ -176,6 +177,17 @@ Disk stress uses `dd` to write/delete files on an `emptyDir` volume. No PVCs or 
 | Request interval (seconds) | `RAMP_NET_INTERVAL` | `0.5` |
 
 Network stress uses `wget` to make HTTPS requests to the target. The default target (`kubernetes.default.svc`) is the cluster's own API server via its in-cluster service DNS, so the network path includes CoreDNS resolution and kube-proxy/iptables service routing in addition to the HTTPS request itself.
+
+**API:**
+
+| Setting | Env var | Default |
+|---------|---------|---------|
+| Queries per second | `RAMP_API_QPS` | `20` |
+| Burst | `RAMP_API_BURST` | `40` |
+| Iterations (objects per step) | `RAMP_API_ITERATIONS` | `50` |
+| Replicas per iteration | `RAMP_API_REPLICAS` | `5` |
+
+API stress uses kube-burner's native object creation engine to create ConfigMaps at the configured QPS. Each iteration creates `RAMP_API_REPLICAS` ConfigMaps, so the total objects per ramp step is `RAMP_API_ITERATIONS * RAMP_API_REPLICAS`. Every request traverses the full Kubernetes API path: authentication, authorization, admission controllers, etcd write, and watch notifications. No additional container images required -- kube-burner handles this directly.
 
 ## Images and registry access
 
@@ -394,11 +406,16 @@ These control which stress modes are active and their parameters. They can be se
 | `MODE_MEM` | `on` | Enable memory contention |
 | `MODE_DISK` | `off` | Enable disk contention |
 | `MODE_NETWORK` | `off` | Enable network contention |
+| `MODE_API` | `off` | Enable API stress (ConfigMap CRUD flood) |
 | `RAMP_DISK_REPLICAS` | `1` | Disk-stress Deployments per step |
 | `RAMP_DISK_MB` | `64` | MB to write per disk-stress pod |
 | `RAMP_NET_REPLICAS` | `1` | Network-stress Deployments per step |
 | `RAMP_NET_TARGET` | `kubernetes.default.svc` | Target host for network requests |
 | `RAMP_NET_INTERVAL` | `0.5` | Seconds between network requests per pod |
+| `RAMP_API_QPS` | `20` | API stress queries per second |
+| `RAMP_API_BURST` | `40` | API stress burst limit |
+| `RAMP_API_ITERATIONS` | `50` | Number of kube-burner iterations per ramp step |
+| `RAMP_API_REPLICAS` | `5` | ConfigMaps created per iteration |
 | `IMAGE_PULL_SECRET` | *(empty)* | Kubernetes Secret name for private registry auth (injected into all pod specs) |
 | `SKIP_IMAGE_LOAD` | `0` | Set to `1` to skip loading the bundled image tar into the cluster |
 | `PROBE_READYZ` | `1` | Set to `0` to disable the `/readyz` probe (useful if the endpoint is restricted) |
@@ -491,14 +508,15 @@ v0/
 │
 ├── workloads/                      # kube-burner job definitions
 │   ├── probe.yaml                  #   Probe phase (creates a kubectl Job)
-│   └── ramp-step.yaml              #   Ramp phase (all four stress modes + probe)
+│   └── ramp-step.yaml              #   Ramp phase (all five stress modes + probe)
 │
 ├── templates/                      # Kubernetes object templates (Go-templated)
 │   ├── probe-job.yaml              #   Job: polls /readyz, list-nodes, list-configmaps
 │   ├── cpu-stress.yaml             #   Deployment: busybox infinite CPU loop
 │   ├── mem-stress.yaml             #   Deployment: busybox dd into /dev/shm
 │   ├── disk-stress.yaml            #   Deployment: busybox dd write/delete on emptyDir
-│   └── net-stress.yaml             #   Deployment: busybox wget loop to target host
+│   ├── net-stress.yaml             #   Deployment: busybox wget loop to target host
+│   └── api-stress-configmap.yaml   #   ConfigMap: lightweight object for API flood
 │
 ├── manifests/
 │   └── probe-rbac.yaml             # Namespace, ServiceAccount, RBAC for probes
@@ -583,6 +601,10 @@ Kubernetes Deployment template. Runs a `busybox:1.36.1` container that continuou
 ### `templates/net-stress.yaml`
 
 Kubernetes Deployment template. Runs a `busybox:1.36.1` container that makes continuous `wget` HTTPS requests to a configurable target host at a configurable interval. No privileged mode or `NET_ADMIN` capability required. The default target (`kubernetes.default.svc`) routes through CoreDNS and kube-proxy service routing.
+
+### `templates/api-stress-configmap.yaml`
+
+Lightweight ConfigMap template used by the API stress mode. kube-burner creates these objects at the configured QPS to flood the Kubernetes API server with CRUD operations. Each request traverses the full API path: authentication, authorization, admission controllers, etcd write, and informer watch notifications. No container images or pods are created -- kube-burner issues the API calls directly.
 
 ### `manifests/probe-rbac.yaml`
 
