@@ -1,0 +1,71 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{.JobName}}"
+  namespace: kb-probe
+  labels:
+    app: kb-probe
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: kb-probe
+        kb-phase: "{{.phase}}"
+    spec:
+      serviceAccountName: probe-sa
+      restartPolicy: Never
+      containers:
+        - name: probe
+          image: bitnami/kubectl:1.35.2
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PHASE
+              value: "{{.phase}}"
+            - name: DURATION
+              value: "{{.duration}}"
+            - name: INTERVAL
+              value: "{{.interval}}"
+            - name: PROBE_READYZ
+              value: "{{.probeReadyz}}"
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              SEQ=0
+              END=$(($(date +%s) + $DURATION))
+              while [ "$(date +%s)" -lt "$END" ]; do
+                SEQ=$((SEQ + 1))
+                TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+                if [ "${PROBE_READYZ}" = "1" ]; then
+                  START_MS=$(date +%s%3N)
+                  kubectl get --raw /readyz >/dev/null 2>&1 && RC=0 || RC=$?
+                  END_MS=$(date +%s%3N)
+                  LAT=$((END_MS - START_MS))
+                  printf '{"ts":"%s","phase":"%s","probe":"readyz","latency_ms":%d,"exit_code":%d,"seq":%d,"error":""}\n' \
+                    "$TS" "$PHASE" "$LAT" "$RC" "$SEQ"
+                fi
+
+                START_MS=$(date +%s%3N)
+                kubectl get nodes -o name >/dev/null 2>&1 && RC=0 || RC=$?
+                END_MS=$(date +%s%3N)
+                LAT=$((END_MS - START_MS))
+                printf '{"ts":"%s","phase":"%s","probe":"list-nodes","latency_ms":%d,"exit_code":%d,"seq":%d,"error":""}\n' \
+                  "$TS" "$PHASE" "$LAT" "$RC" "$SEQ"
+
+                START_MS=$(date +%s%3N)
+                kubectl get configmaps -n kube-system -o name >/dev/null 2>&1 && RC=0 || RC=$?
+                END_MS=$(date +%s%3N)
+                LAT=$((END_MS - START_MS))
+                printf '{"ts":"%s","phase":"%s","probe":"list-configmaps","latency_ms":%d,"exit_code":%d,"seq":%d,"error":""}\n' \
+                  "$TS" "$PHASE" "$LAT" "$RC" "$SEQ"
+
+                sleep "$INTERVAL"
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi

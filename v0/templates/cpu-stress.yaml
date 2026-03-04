@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cpu-stress-step-{{.step}}-{{.Replica}}
+  labels:
+    app: kb-stress
+    kb-step: "{{.step}}"
+    kb-type: cpu
+spec:
+  replicas: {{.podReplicas}}
+  selector:
+    matchLabels:
+      app: kb-stress
+      kb-step: "{{.step}}"
+      kb-type: cpu
+      kb-replica: "{{.Replica}}"
+  template:
+    metadata:
+      labels:
+        app: kb-stress
+        kb-step: "{{.step}}"
+        kb-type: cpu
+        kb-replica: "{{.Replica}}"
+    spec:
+      containers:
+        - name: burn
+          image: busybox:1.36.1
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args: ["while true; do :; done"]
+          resources:
+            requests:
+              cpu: "{{.millicores}}m"
+              memory: 16Mi
+            limits:
+              cpu: "{{.millicores}}m"
+              memory: 16Mi

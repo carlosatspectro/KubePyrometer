@@ -1,0 +1,11 @@
+baseline_probe_duration: 60
+baseline_probe_interval: 5
+ramp_steps: 2
+ramp_cpu_replicas: 2
+ramp_cpu_millicores: 250
+ramp_mem_replicas: 1
+ramp_mem_mb: 128
+recovery_probe_duration: 60
+recovery_probe_interval: 5
+kb_timeout: 5m
+skip_log_file: true

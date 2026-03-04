@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mem-stress-step-{{.step}}-{{.Replica}}
+  labels:
+    app: kb-stress
+    kb-step: "{{.step}}"
+    kb-type: mem
+spec:
+  replicas: {{.podReplicas}}
+  selector:
+    matchLabels:
+      app: kb-stress
+      kb-step: "{{.step}}"
+      kb-type: mem
+      kb-replica: "{{.Replica}}"
+  template:
+    metadata:
+      labels:
+        app: kb-stress
+        kb-step: "{{.step}}"
+        kb-type: mem
+        kb-replica: "{{.Replica}}"
+    spec:
+      containers:
+        - name: eat
+          image: busybox:1.36.1
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              dd if=/dev/zero of=/dev/shm/fill bs=1M count=${MEM_MB} 2>/dev/null
+              sleep infinity
+          env:
+            - name: MEM_MB
+              value: "{{.memMb}}"
+          resources:
+            requests:
+              cpu: 10m
+              memory: "{{.memMb}}Mi"
+            limits:
+              cpu: 10m
+              memory: "{{.memMb}}Mi"

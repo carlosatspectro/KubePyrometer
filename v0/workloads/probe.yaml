@@ -1,0 +1,21 @@
+global:
+  gc: false
+jobs:
+  - name: "probe-{{.PHASE}}"
+    jobType: create
+    jobIterations: 1
+    namespacedIterations: false
+    cleanup: true
+    waitWhenFinished: true
+    maxWaitTimeout: 3m
+    preLoadImages: false
+    verifyObjects: true
+    errorOnVerify: false
+    objects:
+      - objectTemplate: templates/probe-job.yaml
+        replicas: 1
+        inputVars:
+          phase: "{{.PHASE}}"
+          duration: "{{.PROBE_DURATION}}"
+          interval: "{{.PROBE_INTERVAL}}"
+          probeReadyz: "{{.PROBE_READYZ}}"
