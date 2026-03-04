@@ -574,7 +574,7 @@ Kubernetes Deployment template. Runs a `busybox:1.36.1` container with an infini
 
 ### `templates/mem-stress.yaml`
 
-Kubernetes Deployment template. Runs a `busybox:1.36.1` container that uses `dd` to fill `/dev/shm` with a configurable number of megabytes, then sleeps forever. Unprivileged.
+Kubernetes Deployment template. Runs a `busybox:1.36.1` container that uses `dd` to fill `/dev/shm` with a configurable number of megabytes, then sleeps forever. Mounts `/dev/shm` as a memory-backed `emptyDir` volume so the container can actually fill beyond the default 64 MB tmpfs limit. Unprivileged.
 
 ### `templates/disk-stress.yaml`
 
