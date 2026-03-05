@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: net-echo-step-{{.step}}
+  labels:
+    app: net-echo
+    kb-step: "{{.step}}"
+    kb-type: net-echo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: net-echo
+      kb-step: "{{.step}}"
+  template:
+    metadata:
+      labels:
+        app: net-echo
+        kb-step: "{{.step}}"
+    spec:
+      containers:
+        - name: echo
+          image: busybox:1.36.1
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - dd if=/dev/zero of=/tmp/payload bs=1K count=64 2>/dev/null && httpd -f -p 8080 -h /tmp
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi

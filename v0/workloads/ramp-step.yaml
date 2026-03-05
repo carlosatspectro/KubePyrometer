@@ -31,11 +31,18 @@ jobs:
           step: "{{.STEP}}"
           diskMb: "{{.DISK_MB}}"
           podReplicas: "{{.DISK_REPLICAS}}"
+      - objectTemplate: templates/net-echo-service.yaml
+        replicas: 1
+        inputVars:
+          step: "{{.STEP}}"
+      - objectTemplate: templates/net-echo-server.yaml
+        replicas: 1
+        inputVars:
+          step: "{{.STEP}}"
       - objectTemplate: templates/net-stress.yaml
         replicas: 1
         inputVars:
           step: "{{.STEP}}"
-          targetHost: "{{.NET_TARGET}}"
           netInterval: "{{.NET_INTERVAL}}"
           podReplicas: "{{.NET_REPLICAS}}"
   - name: "api-stress-step-{{.STEP}}"

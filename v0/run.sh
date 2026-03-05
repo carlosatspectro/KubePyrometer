@@ -99,7 +99,6 @@ MODE_API="${MODE_API:-off}"
 RAMP_DISK_REPLICAS="${RAMP_DISK_REPLICAS:-1}"
 RAMP_DISK_MB="${RAMP_DISK_MB:-64}"
 RAMP_NET_REPLICAS="${RAMP_NET_REPLICAS:-1}"
-RAMP_NET_TARGET="${RAMP_NET_TARGET:-kubernetes.default.svc}"
 RAMP_NET_INTERVAL="${RAMP_NET_INTERVAL:-0.5}"
 RAMP_API_QPS="${RAMP_API_QPS:-20}"
 RAMP_API_BURST="${RAMP_API_BURST:-40}"
@@ -198,7 +197,6 @@ setup_contention_modes() {
       MODE_NETWORK="on"
       if prompt_yn "Edit network settings for this run? [Y/n]"; then
         RAMP_NET_REPLICAS="$(prompt_value '  NET replicas per step' "$RAMP_NET_REPLICAS")"
-        RAMP_NET_TARGET="$(prompt_value '  NET target host' "$RAMP_NET_TARGET")"
         RAMP_NET_INTERVAL="$(prompt_value '  NET request interval (seconds)' "$RAMP_NET_INTERVAL")"
       fi
     else
@@ -240,7 +238,6 @@ RAMP_MEM_MB=$RAMP_MEM_MB
 RAMP_DISK_REPLICAS=$RAMP_DISK_REPLICAS
 RAMP_DISK_MB=$RAMP_DISK_MB
 RAMP_NET_REPLICAS=$RAMP_NET_REPLICAS
-RAMP_NET_TARGET=$RAMP_NET_TARGET
 RAMP_NET_INTERVAL=$RAMP_NET_INTERVAL
 RAMP_API_QPS=$RAMP_API_QPS
 RAMP_API_BURST=$RAMP_API_BURST
@@ -263,7 +260,7 @@ EOF
     "cpu":     {"enabled": $cpu_en, "replicas": $RAMP_CPU_REPLICAS, "millicores": $RAMP_CPU_MILLICORES},
     "mem":     {"enabled": $mem_en, "replicas": $RAMP_MEM_REPLICAS, "memMb": $RAMP_MEM_MB},
     "disk":    {"enabled": $disk_en, "replicas": $RAMP_DISK_REPLICAS, "diskMb": $RAMP_DISK_MB},
-    "network": {"enabled": $net_en, "replicas": $RAMP_NET_REPLICAS, "target": "$RAMP_NET_TARGET", "intervalSec": "$RAMP_NET_INTERVAL"},
+    "network": {"enabled": $net_en, "replicas": $RAMP_NET_REPLICAS, "intervalSec": "$RAMP_NET_INTERVAL"},
     "api":     {"enabled": $api_en, "qps": $RAMP_API_QPS, "burst": $RAMP_API_BURST, "iterations": $RAMP_API_ITERATIONS, "replicas": $RAMP_API_REPLICAS}
   },
   "monitor": {"enabled": $([ "$CLUSTER_MONITOR" = "1" ] && echo true || echo false), "intervalSec": $MONITOR_INTERVAL}
@@ -275,7 +272,7 @@ EOF
   printf "    cpu     = %-3s  (replicas=%s, millicores=%s)\n" "$MODE_CPU" "$RAMP_CPU_REPLICAS" "$RAMP_CPU_MILLICORES"
   printf "    mem     = %-3s  (replicas=%s, mb=%s)\n" "$MODE_MEM" "$RAMP_MEM_REPLICAS" "$RAMP_MEM_MB"
   printf "    disk    = %-3s  (replicas=%s, mb=%s)\n" "$MODE_DISK" "$RAMP_DISK_REPLICAS" "$RAMP_DISK_MB"
-  printf "    network = %-3s  (replicas=%s, target=%s, interval=%ss)\n" "$MODE_NETWORK" "$RAMP_NET_REPLICAS" "$RAMP_NET_TARGET" "$RAMP_NET_INTERVAL"
+  printf "    network = %-3s  (replicas=%s, interval=%ss)\n" "$MODE_NETWORK" "$RAMP_NET_REPLICAS" "$RAMP_NET_INTERVAL"
   printf "    api     = %-3s  (qps=%s, burst=%s, iterations=%s, replicas=%s)\n" "$MODE_API" "$RAMP_API_QPS" "$RAMP_API_BURST" "$RAMP_API_ITERATIONS" "$RAMP_API_REPLICAS"
   if [ "$CLUSTER_MONITOR" = "1" ]; then
     printf "    monitor = on   (interval=%ss)\n" "$MONITOR_INTERVAL"
@@ -357,11 +354,18 @@ YAML
 YAML
 
     [ "$MODE_NETWORK" = "on" ] && cat >> "$out" <<'YAML'
+      - objectTemplate: templates/net-echo-service.yaml
+        replicas: 1
+        inputVars:
+          step: "{{.STEP}}"
+      - objectTemplate: templates/net-echo-server.yaml
+        replicas: 1
+        inputVars:
+          step: "{{.STEP}}"
       - objectTemplate: templates/net-stress.yaml
         replicas: 1
         inputVars:
           step: "{{.STEP}}"
-          targetHost: "{{.NET_TARGET}}"
           netInterval: "{{.NET_INTERVAL}}"
           podReplicas: "{{.NET_REPLICAS}}"
 YAML
@@ -666,7 +670,6 @@ run_ramp_step() {
   export MEM_REPLICAS="$RAMP_MEM_REPLICAS"
   export DISK_MB="$RAMP_DISK_MB"
   export DISK_REPLICAS="$RAMP_DISK_REPLICAS"
-  export NET_TARGET="$RAMP_NET_TARGET"
   export NET_REPLICAS="$RAMP_NET_REPLICAS"
   export NET_INTERVAL="$RAMP_NET_INTERVAL"
   export API_QPS="$RAMP_API_QPS"

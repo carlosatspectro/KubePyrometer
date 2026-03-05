@@ -80,10 +80,10 @@ The harness supports five contention modes, each independently enabled or disabl
 | **cpu** | Infinite busy-loop pods consuming configurable millicores | on | on |
 | **mem** | Pods that fill `/dev/shm` with configurable MB | on | on |
 | **disk** | Pods that continuously write/delete files on an `emptyDir` volume | on | off |
-| **network** | Pods that make continuous HTTPS requests to a configurable target | on | off |
+| **network** | Pod-to-pod HTTP traffic via an in-cluster echo server | on | off |
 | **api** | Floods the Kubernetes API server with ConfigMap CRUD operations at configurable QPS | on | off |
 
-The cpu, mem, disk, and network stress modes use `busybox:1.36.1` and run as unprivileged pods with no `NET_ADMIN` capabilities or PVCs. The api stress mode uses kube-burner's native object creation to hammer the API server through the full request path (authn, authz, admission, etcd). The probe pods use `bitnami/kubectl:1.35.2`.
+The cpu, mem, disk, and network stress modes use `busybox:1.36.1` and run as unprivileged pods with no `NET_ADMIN` capabilities or PVCs. Network stress deploys a lightweight echo server (busybox httpd) and client pods that download a 64 KB payload in a loop, saturating pod network I/O without requiring any RBAC or API server access. The api stress mode uses kube-burner's native object creation to hammer the API server through the full request path (authn, authz, admission, etcd). The probe pods use `bitnami/kubectl:1.35.2`.
 
 ### CLI flags
 
@@ -120,7 +120,7 @@ Enable network contention? [Y/n] n
     cpu     = on   (replicas=1, millicores=50)
     mem     = on   (replicas=2, mb=64)
     disk    = on   (replicas=1, mb=64)
-    network = off  (replicas=1, target=kubernetes.default.svc, interval=0.5s)
+    network = off  (replicas=1, interval=0.5s)
 ```
 
 All enable prompts default to **YES** (press Enter to accept). Settings show their current default in brackets; press Enter to keep the default or type a new value.
@@ -173,10 +173,9 @@ Disk stress uses `dd` to write/delete files on an `emptyDir` volume. No PVCs or 
 | Setting | Env var | Default |
 |---------|---------|---------|
 | Replicas per step | `RAMP_NET_REPLICAS` | `1` |
-| Target host | `RAMP_NET_TARGET` | `kubernetes.default.svc` |
 | Request interval (seconds) | `RAMP_NET_INTERVAL` | `0.5` |
 
-Network stress uses `wget` to make HTTPS requests to the target. The default target (`kubernetes.default.svc`) is the cluster's own API server via its in-cluster service DNS, so the network path includes CoreDNS resolution and kube-proxy/iptables service routing in addition to the HTTPS request itself.
+Network stress deploys a lightweight echo server (busybox httpd serving a 64 KB payload) and client pods that `wget` it in a tight loop. This saturates pod network I/O -- affecting CNI, node networking, kube-proxy/iptables, and potentially etcd gossip on shared networks -- without requiring any RBAC or API server access. For API server stress, use the `api` mode instead.
 
 **API:**
 
@@ -381,20 +380,42 @@ The smoke test uses intentionally small parameter values (1 ramp step, 10s probe
 
 Flat YAML file of default parameters. Each key is uppercased and exported as an env var (e.g., `ramp_steps: 2` becomes `RAMP_STEPS=2`). Environment variables take precedence over the config file.
 
+The config file contains every tunable variable. Each key is uppercased and exported as an env var (e.g., `ramp_steps: 2` becomes `RAMP_STEPS=2`). Environment variables take precedence over the config file.
+
 | Key | Default | Description |
 |-----|---------|-------------|
 | `baseline_probe_duration` | `10` | Seconds to run the baseline probe |
 | `baseline_probe_interval` | `2` | Seconds between probe iterations |
 | `ramp_steps` | `2` | Number of incremental stress steps |
-| `ramp_cpu_replicas` | `1` | CPU-stress Deployments per step |
-| `ramp_cpu_millicores` | `50` | CPU request/limit per stress pod (millicores) |
-| `ramp_mem_replicas` | `1` | Memory-stress Deployments per step |
-| `ramp_mem_mb` | `32` | Memory request/limit per stress pod (Mi) |
 | `ramp_probe_duration` | `10` | Seconds to probe during each ramp step |
 | `ramp_probe_interval` | `2` | Seconds between ramp-step probe iterations |
 | `recovery_probe_duration` | `10` | Seconds to run the recovery probe |
 | `recovery_probe_interval` | `2` | Seconds between recovery probe iterations |
 | `kb_timeout` | `5m` | kube-burner per-phase timeout |
+| `skip_log_file` | `true` | Skip kube-burner's own log file |
+| `probe_readyz` | `1` | Set to `0` to disable `/readyz` probe |
+| `mode_cpu` | `on` | Enable CPU contention |
+| `mode_mem` | `on` | Enable memory contention |
+| `mode_disk` | `off` | Enable disk contention |
+| `mode_network` | `off` | Enable network contention |
+| `mode_api` | `off` | Enable API stress |
+| `ramp_cpu_replicas` | `1` | CPU-stress Deployments per step |
+| `ramp_cpu_millicores` | `50` | CPU request/limit per stress pod (millicores) |
+| `ramp_mem_replicas` | `1` | Memory-stress Deployments per step |
+| `ramp_mem_mb` | `32` | Memory request/limit per stress pod (Mi) |
+| `ramp_disk_replicas` | `1` | Disk-stress Deployments per step |
+| `ramp_disk_mb` | `64` | MB to write per disk-stress pod |
+| `ramp_net_replicas` | `1` | Network-stress Deployments per step |
+| `ramp_net_interval` | `0.5` | Seconds between network requests per pod |
+| `ramp_api_qps` | `20` | API stress queries per second |
+| `ramp_api_burst` | `40` | API stress burst limit |
+| `ramp_api_iterations` | `50` | kube-burner iterations per ramp step |
+| `ramp_api_replicas` | `5` | ConfigMaps + Secrets created per iteration |
+| `cluster_monitor` | `0` | Set to `1` for resource monitoring during run |
+| `monitor_interval` | `10` | Seconds between monitor snapshots |
+| `image_map_file` | *(empty)* | Path to image redirect map file |
+| `image_pull_secret` | *(empty)* | Kubernetes Secret name for private registry auth |
+| `skip_image_load` | `0` | Set to `1` to skip bundled image loading |
 
 ### Contention mode variables
 
@@ -410,7 +431,6 @@ These control which stress modes are active and their parameters. They can be se
 | `RAMP_DISK_REPLICAS` | `1` | Disk-stress Deployments per step |
 | `RAMP_DISK_MB` | `64` | MB to write per disk-stress pod |
 | `RAMP_NET_REPLICAS` | `1` | Network-stress Deployments per step |
-| `RAMP_NET_TARGET` | `kubernetes.default.svc` | Target host for network requests |
 | `RAMP_NET_INTERVAL` | `0.5` | Seconds between network requests per pod |
 | `RAMP_API_QPS` | `20` | API stress queries per second |
 | `RAMP_API_BURST` | `40` | API stress burst limit |
@@ -488,7 +508,7 @@ bash v0/scripts/build-kube-burner.sh
 
 **Disk stress uses emptyDir.** The disk contention mode writes to an `emptyDir` volume, which is backed by the node's filesystem. No PVCs or StorageClasses are required. Write sizes are conservative by default (64 MB).
 
-**Network stress target includes DNS + service routing.** The default network target `kubernetes.default.svc` routes through CoreDNS and kube-proxy/iptables before reaching the API server. This means the network stress path includes cluster DNS resolution, service routing, and the HTTPS request itself. No privileged mode or `NET_ADMIN` capability is needed.
+**Network stress is pod-to-pod.** Network stress deploys its own echo server and client pods that download a 64 KB payload in a loop. Traffic routes through CoreDNS (service name resolution) and kube-proxy/iptables (ClusterIP routing), saturating real network I/O. No RBAC, API server access, privileged mode, or `NET_ADMIN` capability is needed. To stress the API server with CRUD operations, use the `api` mode instead.
 
 ## Compatibility
 
@@ -554,7 +574,9 @@ v0/
 │   ├── cpu-stress.yaml             #   Deployment: busybox infinite CPU loop
 │   ├── mem-stress.yaml             #   Deployment: busybox dd into /dev/shm
 │   ├── disk-stress.yaml            #   Deployment: busybox dd write/delete on emptyDir
-│   ├── net-stress.yaml             #   Deployment: busybox wget loop to target host
+│   ├── net-echo-server.yaml         #   Deployment: busybox httpd echo server for net stress
+│   ├── net-echo-service.yaml       #   Service: ClusterIP for echo server
+│   ├── net-stress.yaml             #   Deployment: busybox wget loop hitting echo server
 │   ├── api-stress-configmap.yaml   #   ConfigMap: lightweight object for API flood
 │   └── api-stress-secret.yaml     #   Secret: lightweight object for API flood (etcd encryption)
 │
@@ -643,9 +665,17 @@ Kubernetes Deployment template. Runs a `busybox:1.36.1` container that uses `dd`
 
 Kubernetes Deployment template. Runs a `busybox:1.36.1` container that continuously writes and deletes files on an `emptyDir` volume using `dd`. Write size is configurable via the `diskMb` input variable. No PVC or privileged mode required.
 
+### `templates/net-echo-server.yaml`
+
+Kubernetes Deployment template for the network stress echo server. Deploys 2 replicas of a `busybox:1.36.1` container running `httpd` serving a 64 KB zero-filled payload file. Created automatically when `MODE_NETWORK=on`.
+
+### `templates/net-echo-service.yaml`
+
+ClusterIP Service that load-balances traffic across the echo server pods. Client pods resolve `net-echo:8080` via in-namespace DNS.
+
 ### `templates/net-stress.yaml`
 
-Kubernetes Deployment template. Runs a `busybox:1.36.1` container that makes continuous `wget` HTTPS requests to a configurable target host at a configurable interval. No privileged mode or `NET_ADMIN` capability required. The default target (`kubernetes.default.svc`) routes through CoreDNS and kube-proxy service routing.
+Kubernetes Deployment template for network stress client pods. Each pod runs a `wget` loop that downloads the 64 KB payload from the `net-echo` Service at a configurable interval. This generates real pod-to-pod network I/O without requiring any RBAC, API server access, or elevated privileges.
 
 ### `templates/api-stress-configmap.yaml`
 
