@@ -29,8 +29,11 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
+              TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
               while true; do
-                wget -q -T 2 -O /dev/null "https://${TARGET_HOST}/healthz" 2>/dev/null || true
+                wget --header="Authorization: Bearer ${TOKEN}" --ca-certificate="${CA}" \
+                     -q -T 2 -O /dev/null "https://${TARGET_HOST}/healthz" 2>/dev/null || true
                 sleep "${INTERVAL}"
               done
           env:
