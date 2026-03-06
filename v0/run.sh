@@ -60,6 +60,8 @@ parse_config() {
     [[ -z "$line" || ! "$line" =~ : ]] && continue
     key="${line%%:*}"; key="${key// /}"
     val="${line#*:}";  val="${val# }"; val="${val% }"
+    val="${val#\"}"; val="${val%\"}"
+    val="${val#\'}"; val="${val%\'}"
     key=$(echo "$key" | tr '[:lower:]' '[:upper:]')
     # only set if not already exported
     if [ -z "${!key+x}" ]; then

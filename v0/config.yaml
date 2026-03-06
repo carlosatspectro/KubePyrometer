@@ -7,31 +7,31 @@ ramp_probe_interval: 2
 recovery_probe_duration: 10
 recovery_probe_interval: 2
 kb_timeout: 5m
-skip_log_file: "true"
+skip_log_file: true
 probe_readyz: 1
 
 # ─── CPU contention ───────────────────────────────────────────
-mode_cpu: "on"
+mode_cpu: on
 ramp_cpu_replicas: 1
 ramp_cpu_millicores: 50
 
 # ─── Memory contention ────────────────────────────────────────
-mode_mem: "on"
+mode_mem: on
 ramp_mem_replicas: 1
 ramp_mem_mb: 32
 
 # ─── Disk contention ──────────────────────────────────────────
-mode_disk: "off"
+mode_disk: off
 ramp_disk_replicas: 1
 ramp_disk_mb: 64
 
 # ─── Network contention ───────────────────────────────────────
-mode_network: "off"
+mode_network: off
 ramp_net_replicas: 1
 ramp_net_interval: 0.5
 
 # ─── API stress ────────────────────────────────────────────────
-mode_api: "off"
+mode_api: off
 ramp_api_qps: 20
 ramp_api_burst: 40
 ramp_api_iterations: 50

@@ -83,3 +83,4 @@ jobs:
           phase: "ramp-step-{{.STEP}}"
           duration: "{{.RAMP_PROBE_DURATION}}"
           interval: "{{.RAMP_PROBE_INTERVAL}}"
+          probeReadyz: "{{.PROBE_READYZ}}"
