@@ -7,7 +7,7 @@ jobs:
     namespacedIterations: false
     cleanup: true
     waitWhenFinished: true
-    maxWaitTimeout: 5m
+    maxWaitTimeout: {{.KB_TIMEOUT}}
     qps: {{.RAMP_QPS}}
     burst: {{.RAMP_BURST}}
     preLoadImages: false
