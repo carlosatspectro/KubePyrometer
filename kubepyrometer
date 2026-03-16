@@ -71,6 +71,7 @@ Usage:
 
 Commands:
   run          Run the load-testing harness
+  analyze      Analyze a completed run and explain results
   init         Generate a default config file in the current directory
   summarize    Generate summary CSVs from a run directory
   monitor      Start the cluster resource monitor
@@ -106,6 +107,17 @@ EOF
 cmd_run() {
   resolve_config
   exec bash "$KUBEPYROMETER_HOME/run.sh" "$@"
+}
+
+cmd_analyze() {
+  if [ $# -eq 0 ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: kubepyrometer analyze <run-dir>"
+    echo ""
+    echo "Analyze a completed run directory and produce a human-readable"
+    echo "breakdown of what happened, latency degradation, and failures."
+    [ $# -eq 0 ] && exit 1 || exit 0
+  fi
+  exec bash "$KUBEPYROMETER_HOME/scripts/analyze.sh" "$@"
 }
 
 cmd_init() {
@@ -171,6 +183,7 @@ shift 2>/dev/null || true
 
 case "$COMMAND" in
   run)        cmd_run "$@" ;;
+  analyze)    cmd_analyze "$@" ;;
   init)       cmd_init "$@" ;;
   summarize)  cmd_summarize "$@" ;;
   monitor)    cmd_monitor "$@" ;;
