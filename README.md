@@ -47,9 +47,8 @@ kubepyrometer init
 # 3. Run the harness
 kubepyrometer run
 
-# 4. View results
-cat "$(ls -dt runs/*/ | head -1)/summary.csv"
-cat "$(ls -dt runs/*/ | head -1)/probe-stats.csv"
+# 4. Analyze results
+kubepyrometer analyze "$(ls -dt runs/*/ | head -1)"
 ```
 
 Step 2 creates a `kubepyrometer.yaml` in the current directory. You can skip it to run with defaults, but reviewing it first is recommended -- it documents every setting the harness uses. See [Configuration](#configuration) for the full reference.
@@ -149,7 +148,7 @@ The harness supports five contention modes, each independently enabled or disabl
 | **network** | Pod-to-pod HTTP traffic via an in-cluster echo server | on | off |
 | **api** | Floods the Kubernetes API server with ConfigMap + Secret creation at configurable QPS | on | off |
 
-The cpu, mem, disk, and network stress modes use `busybox:1.36.1` and run as unprivileged pods with no `NET_ADMIN` capabilities or PVCs. Network stress deploys a lightweight echo server (busybox httpd) and client pods that download a 64 KB payload in a loop, saturating pod network I/O without requiring any RBAC or API server access. The api stress mode uses kube-burner's native object creation to hammer the API server through the full request path (authn, authz, admission, etcd). The probe pods use `bitnami/kubectl:1.35.2`.
+The cpu, mem, disk, and network stress modes use `busybox:1.36.1` and run as unprivileged pods with no `NET_ADMIN` capabilities or PVCs. Network stress deploys a lightweight echo server (busybox httpd) and client pods that download a 64 KB payload in a loop, saturating pod network I/O without requiring any RBAC or API server access. The api stress mode uses kube-burner's native object creation to hammer the API server through the full request path (authn, authz, admission, etcd). The probe pods use `bitnami/kubectl:latest`.
 
 ### CLI commands
 
@@ -161,9 +160,11 @@ kubepyrometer run -r           # prompt for image registry redirect + pull secre
 kubepyrometer run -p large     # load a config profile (e.g., safer defaults for production)
 kubepyrometer run -f my.yaml   # use a specific config file
 kubepyrometer run -o ./out     # write run artifacts to a custom directory
+kubepyrometer analyze <dir>    # analyze a completed run and explain results
 kubepyrometer init             # generate a default kubepyrometer.yaml in the current directory
 kubepyrometer summarize <dir>  # regenerate summary CSVs from a run directory
 kubepyrometer monitor          # start the cluster resource monitor standalone
+kubepyrometer tui              # launch interactive TUI (requires gum)
 kubepyrometer bundle <dir>     # package run artifacts into a shareable tarball
 kubepyrometer version          # print version information
 ```
@@ -224,7 +225,7 @@ Example `my-images.txt` for a private ECR registry:
 ```
 # Redirect harness images to private ECR
 busybox:1.36.1 = 123456789.dkr.ecr.us-east-1.amazonaws.com/busybox:1.36.1
-bitnami/kubectl:1.35.2 = 123456789.dkr.ecr.us-east-1.amazonaws.com/bitnami/kubectl:1.35.2
+bitnami/kubectl:latest = 123456789.dkr.ecr.us-east-1.amazonaws.com/bitnami/kubectl:latest
 ```
 
 The harness detects all `image:` references in `templates/*.yaml` and `manifests/*.yaml`, then does a global find-and-replace in the staged copies. Source files are never modified.
@@ -237,9 +238,9 @@ docker pull busybox:1.36.1
 docker tag busybox:1.36.1 123456789.dkr.ecr.us-east-1.amazonaws.com/busybox:1.36.1
 docker push 123456789.dkr.ecr.us-east-1.amazonaws.com/busybox:1.36.1
 
-docker pull bitnami/kubectl:1.35.2
-docker tag bitnami/kubectl:1.35.2 123456789.dkr.ecr.us-east-1.amazonaws.com/bitnami/kubectl:1.35.2
-docker push 123456789.dkr.ecr.us-east-1.amazonaws.com/bitnami/kubectl:1.35.2
+docker pull bitnami/kubectl:latest
+docker tag bitnami/kubectl:latest 123456789.dkr.ecr.us-east-1.amazonaws.com/bitnami/kubectl:latest
+docker push 123456789.dkr.ecr.us-east-1.amazonaws.com/bitnami/kubectl:latest
 
 # 2. Create an image pull secret in the cluster
 #    (The harness injects imagePullSecrets into all pod specs automatically.)
@@ -329,7 +330,7 @@ Both container images are bundled in the repo as `lib/images/harness-images.tar`
 | Image | Used by | Size |
 |-------|---------|------|
 | `busybox:1.36.1` | All stress pods | ~2 MB |
-| `bitnami/kubectl:1.35.2` | Probe pods | ~70 MB |
+| `bitnami/kubectl:latest` | Probe pods | ~70 MB |
 
 All templates set `imagePullPolicy: IfNotPresent`, so kubelet uses pre-loaded images and does not contact a registry when they are present on the node.
 
@@ -466,7 +467,19 @@ cat "$RUN_DIR/probe-stats.csv"
 
 ## Interpreting results
 
-Each run produces `probe-stats.csv` with per-phase latency percentiles (aggregated across all probe types):
+The fastest way to understand a run is `kubepyrometer analyze`:
+
+```bash
+kubepyrometer analyze runs/20260316-110035
+```
+
+This prints a structured report covering the run overview, phase-by-phase pass/fail breakdown, latency table (p50/p95/min/max), degradation scoring vs baseline (nominal / elevated / degraded / critical), recovery assessment, failure root-cause diagnosis, capacity context, and actionable recommendations.
+
+### Reading the raw data
+
+Each run also produces CSV and JSONL files for programmatic analysis:
+
+**`probe-stats.csv`** -- per-phase latency percentiles:
 
 ```
 phase,count,min_ms,p50_ms,p95_ms,max_ms
@@ -482,7 +495,7 @@ recovery,6,807,989,1289,1289
 - **Recovery p50/p95 vs baseline** -- Should return to near-baseline levels after teardown. If recovery latency remains elevated, the cluster may need more time to stabilize (increase `RECOVERY_PROBE_DURATION`) or there may be residual resource pressure.
 - **exit_code > 0** -- Indicates a probe request failed entirely (e.g., API server unreachable). Occasional failures during heavy ramp steps are expected; persistent failures indicate the cluster is overwhelmed.
 
-For deeper analysis, use `probe.jsonl` directly -- each line contains the individual probe type, latency, and timestamp for time-series analysis.
+For time-series analysis, use `probe.jsonl` directly -- each line contains the individual probe type, latency, and timestamp.
 
 ## Dry run (local Kind cluster)
 
@@ -682,7 +695,7 @@ The bundle includes summaries, JSONL data, phase logs, cluster fingerprint, fail
 
 ```
 kubepyrometer                       # CLI entry point (subcommands: run, init, summarize, etc.)
-VERSION                             # Release version (e.g. 0.3.0-preview)
+VERSION                             # Release version (e.g. 1.1.0)
 Makefile                            # install / uninstall / dist targets
 .github/workflows/release.yml      # GitHub Actions release automation
 lib/
@@ -707,6 +720,7 @@ lib/
 │   ├── build-kube-burner.sh        # OPTIONAL: build from source (requires Go >= 1.23)
 │   ├── save-images.sh              # Pulls and saves container images to images/harness-images.tar
 │   ├── load-images.sh              # Loads bundled images into the current cluster
+│   ├── analyze.sh                  # Analyzes a run directory and explains results
 │   ├── summarize.sh                # Generates summary.csv + probe-stats.csv from run data
 │   ├── cluster-monitor.sh          # Lightweight cluster resource monitor (kubectl top + events)
 │   ├── bundle-run.sh               # Packages run artifacts into a shareable .tar.gz
@@ -752,7 +766,7 @@ lib/
 
 ### `kubepyrometer` (CLI entry point)
 
-The top-level CLI wrapper. Resolves the data directory (`KUBEPYROMETER_HOME`), dispatches to subcommands (`run`, `init`, `summarize`, `monitor`, `bundle`, `version`), and handles config file search (see [CLI commands](#cli-commands)). When installed via Homebrew, data files live under `$(brew --prefix)/libexec/kubepyrometer/`; from a repo checkout, they're found under `lib/`.
+The top-level CLI wrapper. Resolves the data directory (`KUBEPYROMETER_HOME`), dispatches to subcommands (`run`, `analyze`, `init`, `summarize`, `monitor`, `tui`, `bundle`, `version`), and handles config file search (see [CLI commands](#cli-commands)). When installed via Homebrew, data files live under `$(brew --prefix)/libexec/kubepyrometer/`; from a repo checkout, they're found under `lib/`.
 
 ### `run.sh`
 
@@ -777,11 +791,15 @@ Downloads kube-burner v2.4.0 from GitHub Releases for the current OS/arch (`darw
 
 ### `scripts/save-images.sh`
 
-Pulls `busybox:1.36.1` and `bitnami/kubectl:latest` via Docker, re-tags kubectl to the pinned version (`1.35.2`), and saves both into `lib/images/harness-images.tar`. Run this to refresh the bundled images. The pinned version (`KUBECTL_TAG`) is defined at the top of the script and must match the image ref in `templates/probe-job.yaml`.
+Pulls `busybox:1.36.1` and `bitnami/kubectl:latest` via Docker and saves both into `lib/images/harness-images.tar`. Run this to refresh the bundled images.
 
 ### `scripts/load-images.sh`
 
 Loads `lib/images/harness-images.tar` into the current cluster. Auto-detects Kind (via `kind-*` kubectl context prefix) and k3d. Falls back to `docker load`, which only helps when Docker Desktop is the Kubernetes runtime (Docker and kubelet share the image store). For remote clusters, this fallback is not useful -- use registry redirect instead. Called automatically by `kubepyrometer run` unless `IMAGE_MAP_FILE` or `SKIP_IMAGE_LOAD=1` is set.
+
+### `scripts/analyze.sh`
+
+Analyzes a completed run directory and prints a human-readable report. Covers: run overview (cluster, nodes, K8s version, verdict), phase-by-phase breakdown with timing and pass/fail, latency table (p50/p95/min/max per phase), degradation scoring vs baseline, recovery assessment, failure root-cause diagnosis (timeouts, image pulls, RBAC, schema errors), capacity context (stress pressure as a percentage of cluster resources), and actionable recommendations. No external dependencies -- works with bash, grep, sed, and awk. Called by `kubepyrometer analyze <run-dir>`.
 
 ### `scripts/summarize.sh`
 
@@ -809,7 +827,7 @@ kube-burner job definition for each ramp step. The checked-in file references al
 
 ### `templates/probe-job.yaml`
 
-Kubernetes Job template. Runs a shell loop inside a `bitnami/kubectl:1.35.2` container that performs up to three checks per iteration (`/readyz` if `PROBE_READYZ=1`, list nodes, list configmaps in `kube-system`) and emits one JSON line per check to stdout.
+Kubernetes Job template. Runs a shell loop inside a `bitnami/kubectl:latest` container that performs up to three checks per iteration (`/readyz` if `PROBE_READYZ=1`, list nodes, list configmaps in `kube-system`) and emits one JSON line per check to stdout.
 
 ### `templates/cpu-stress.yaml`
 
